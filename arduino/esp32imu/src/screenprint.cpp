@@ -56,12 +56,35 @@ void callback(const esp_serial_imu_msg_t& msg)
   std::cout << "Got IMU " << msg.seq << " at " << msg.t_us
             << " us (" << dt_us << " us): "
             << ss.str() << std::endl;
+
+
+  // std::stringstream ss;
+  // ss << msg.seq << ","
+  //    << msg.t_us << ","
+  //    << msg.accel_x << ","
+  //    << msg.accel_y << ","
+  //    << msg.accel_z << ","
+  //    << msg.gyro_x << ","
+  //    << msg.gyro_y << ","
+  //    << msg.gyro_z << ","
+  //    << msg.mag_x << ","
+  //    << msg.mag_y << ","
+  //    << msg.mag_z;
+  // std::cout << ss.str() << std::endl;
 }
 
 void rateCb(const esp_serial_rate_msg_t& msg)
 {
   std::cout << std::endl << "***************************" << std::endl;
   std::cout << "Sample Rate: " << msg.frequency << " Hz" << std::endl;
+  std::cout << "***************************" << std::endl << std::endl;
+}
+
+void statusCb(const esp_serial_status_msg_t& msg)
+{
+  std::cout << std::endl << "***************************" << std::endl;
+  std::cout << "dt avg: " << msg.imu_sample_dt_avg << " s" << std::endl;
+  std::cout << "dt std: " << msg.imu_sample_dt_std << " s" << std::endl;
   std::cout << "***************************" << std::endl << std::endl;
 }
 
@@ -73,11 +96,12 @@ int main(int argc, char const *argv[])
 
   acl::esp32imu::SerialDriver driver(port, 2000000);
   driver.registerCallbackIMU(callback);
+  driver.registerCallbackStatus(statusCb);
   driver.registerCallbackRate(rateCb);
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  // std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-  driver.sendRate(100);
+  // driver.sendRate(100);
 
   // spin forever and let CPU do other things (no busy waiting)
   std::promise<void>().get_future().wait();

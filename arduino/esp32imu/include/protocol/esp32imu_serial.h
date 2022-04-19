@@ -23,6 +23,7 @@
 
 typedef enum {
   ESP_SERIAL_MSG_IMU,
+  ESP_SERIAL_MSG_STATUS,
   ESP_SERIAL_MSG_RATE,
   ESP_SERIAL_NUM_MSGS
 } esp_msg_type_t;
@@ -46,12 +47,20 @@ typedef struct {
 } esp_serial_imu_msg_t;
 
 typedef struct {
+  uint32_t t_us;
+  uint32_t seq;
+  float imu_sample_dt_avg;
+  float imu_sample_dt_std;
+} esp_serial_status_msg_t;
+
+typedef struct {
   uint16_t frequency;
 } esp_serial_rate_msg_t;
 
 // payload lengths
 static constexpr float ESP_SERIAL_PAYLOAD_LEN[] = {
   sizeof(esp_serial_imu_msg_t),
+  sizeof(esp_serial_status_msg_t),
   sizeof(esp_serial_rate_msg_t)
 };
 
@@ -167,6 +176,37 @@ inline size_t esp_serial_imu_msg_send_to_buffer(uint8_t *dst, const esp_serial_i
 {
   esp_serial_message_t msg;
   esp_serial_imu_msg_pack(&msg, src);
+  return esp_serial_send_to_buffer(dst, &msg);
+}
+
+//=============================================================================
+// Status message
+//=============================================================================
+
+inline void esp_serial_status_msg_pack(esp_serial_message_t *dst, const esp_serial_status_msg_t *src)
+{
+  dst->type = ESP_SERIAL_MSG_IMU;
+  size_t offset = 0;
+  memcpy(dst->payload + offset, &src->t_us, sizeof(src->t_us)); offset += sizeof(src->t_us);
+  memcpy(dst->payload + offset, &src->seq, sizeof(src->seq)); offset += sizeof(src->seq);
+  memcpy(dst->payload + offset, &src->imu_sample_dt_avg, sizeof(src->imu_sample_dt_avg)); offset += sizeof(src->imu_sample_dt_avg);
+  memcpy(dst->payload + offset, &src->imu_sample_dt_std, sizeof(src->imu_sample_dt_std)); offset += sizeof(src->imu_sample_dt_std);
+  esp_serial_finalize_message(dst);
+}
+
+inline void esp_serial_status_msg_unpack(esp_serial_status_msg_t *dst, const esp_serial_message_t *src)
+{
+  size_t offset = 0;
+  memcpy(&dst->t_us, src->payload + offset, sizeof(dst->t_us)); offset += sizeof(dst->t_us);
+  memcpy(&dst->seq, src->payload + offset, sizeof(dst->seq)); offset += sizeof(dst->seq);
+  memcpy(&dst->imu_sample_dt_avg, src->payload + offset, sizeof(dst->imu_sample_dt_avg)); offset += sizeof(dst->imu_sample_dt_avg);
+  memcpy(&dst->imu_sample_dt_std, src->payload + offset, sizeof(dst->imu_sample_dt_std)); offset += sizeof(dst->imu_sample_dt_std);
+}
+
+inline size_t esp_serial_status_msg_send_to_buffer(uint8_t *dst, const esp_serial_status_msg_t *src)
+{
+  esp_serial_message_t msg;
+  esp_serial_status_msg_pack(&msg, src);
   return esp_serial_send_to_buffer(dst, &msg);
 }
 

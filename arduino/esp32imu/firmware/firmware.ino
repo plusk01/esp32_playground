@@ -19,7 +19,7 @@ SPIClass SPI2(HSPI);
 SPIClass SPI3(VSPI);
 
 // IMU ring buffer
-static constexpr int IMUBUF_SIZE = 400;
+static constexpr int IMUBUF_SIZE = 200;
 esp_serial_imu_msg_t imubuf_[IMUBUF_SIZE];
 volatile uint16_t imubuf_head_ = 0;
 volatile uint16_t imubuf_tail_ = 0;
@@ -39,8 +39,7 @@ static constexpr int TICKS_PER_SEC = 1000000;
 static constexpr int SAMPLE_PER_SEC = 4000;
 static constexpr int PERIOD_TICKS = TICKS_PER_SEC / SAMPLE_PER_SEC;
 
-// hw timer <--> sample task semaphore
-SemaphoreHandle_t semDataReady = NULL;
+TaskHandle_t xTaskToNotify = NULL;
 
 // serial stuff
 uint8_t serbuf[IMUBUF_SIZE * ESP_SERIAL_MAX_MESSAGE_LEN];
@@ -50,17 +49,16 @@ uint8_t serbuf[IMUBUF_SIZE * ESP_SERIAL_MAX_MESSAGE_LEN];
 // ISR
 //=============================================================================
 
-void IRAM_ATTR timer_isr() {
+bool IRAM_ATTR timer_isr() {
   BaseType_t xHigherPriorityTaskHasWoken = pdFALSE;
-  xSemaphoreGiveFromISR(semDataReady, &xHigherPriorityTaskHasWoken);
-  // TODO: if higher priority woken, do context switch?
+  vTaskNotifyGiveFromISR(xTaskToNotify, &xHigherPriorityTaskHasWoken);
 
 //    uint32_t tnow = micros() - t0_;
 //    imubuf_[imubuf_head_].t_us = tnow;
 //    imubuf_[imubuf_head_].seq = seq++;
 //    imubuf_head_ = (imubuf_head_ + 1) % IMUBUF_SIZE;
 
-  portYIELD_FROM_ISR(xHigherPriorityTaskHasWoken);
+  return xHigherPriorityTaskHasWoken;
 }
 
 //=============================================================================
@@ -78,24 +76,27 @@ void vTaskGetData(void * pvParameters) {
   t0_ = micros();
   
   for (;;) {
-    if (xSemaphoreTake(semDataReady, portMAX_DELAY) == pdTRUE) {
+    if (ulTaskNotifyTake(pdTRUE, portMAX_DELAY) == pdTRUE) {
 
         uint32_t tnow = micros() - t0_;
 
        // complete a SPI transaction with IMU to get data
        ICM_20948_AGMT_t agmt = imu.getAGMT(); // takes ~208 usec @ 4MHz, ~169usec @ 7MHz
+//        delayMicroseconds(100);
 
        imubuf_[imubuf_head_].t_us = tnow;
        imubuf_[imubuf_head_].seq = seq++;
-       imubuf_[imubuf_head_].accel_x = micros() - t0_ - tnow; //Ascale * agmt.acc.axes.x;
-       imubuf_[imubuf_head_].accel_y = imubuf_head_; //Ascale * agmt.acc.axes.y;
-//       imubuf_[imubuf_head_].accel_z = Ascale * agmt.acc.axes.z;
-//       imubuf_[imubuf_head_].gyro_x = Gscale * agmt.gyr.axes.x;
-//       imubuf_[imubuf_head_].gyro_y = Gscale * agmt.gyr.axes.y;
-//       imubuf_[imubuf_head_].gyro_z = Gscale * agmt.gyr.axes.z;
-//       imubuf_[imubuf_head_].mag_x = Mscale * agmt.mag.axes.x;
-//       imubuf_[imubuf_head_].mag_y = Mscale * agmt.mag.axes.y;
-//       imubuf_[imubuf_head_].mag_z = Mscale * agmt.mag.axes.z;
+//       imubuf_[imubuf_head_].accel_x = micros() - t0_ - tnow; //Ascale * agmt.acc.axes.x;
+//       imubuf_[imubuf_head_].accel_y = imubuf_head_; //Ascale * agmt.acc.axes.y;
+       imubuf_[imubuf_head_].accel_x = Ascale * agmt.acc.axes.x;
+       imubuf_[imubuf_head_].accel_y = Ascale * agmt.acc.axes.y;
+       imubuf_[imubuf_head_].accel_z = Ascale * agmt.acc.axes.z;
+       imubuf_[imubuf_head_].gyro_x = Gscale * agmt.gyr.axes.x;
+       imubuf_[imubuf_head_].gyro_y = Gscale * agmt.gyr.axes.y;
+       imubuf_[imubuf_head_].gyro_z = Gscale * agmt.gyr.axes.z;
+       imubuf_[imubuf_head_].mag_x = Mscale * agmt.mag.axes.x;
+       imubuf_[imubuf_head_].mag_y = Mscale * agmt.mag.axes.y;
+       imubuf_[imubuf_head_].mag_z = Mscale * agmt.mag.axes.z;
 
         // move the head of the buffer, wrapping around if neccessary
         imubuf_head_ = (imubuf_head_ + 1) % IMUBUF_SIZE;      
@@ -160,25 +161,26 @@ void init_imu() {
 
 // -------------------------------------------------------------------------
 
+void init_uart() {
+  
+}
+
+// -------------------------------------------------------------------------
+
 void setup() {
-  Serial.setTxBufferSize(256);
-//  Serial.begin(115200);
-//    Serial.begin(1000000);
+  Serial.setTxBufferSize(512); // uncomment when CONFIG_DISABLE_HAL_LOCKS not defined
   Serial.begin(2000000);
   
   init_imu();
+  init_uart();
 
-  semDataReady = xSemaphoreCreateBinary();
-  xTaskCreatePinnedToCore(vTaskGetData, "vTaskGetData", 1024, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(vTaskGetData, "vTaskGetData", 1024, NULL, 2, &xTaskToNotify, 1);
   xTaskCreatePinnedToCore(vLoop, "vLoop", 4096, NULL, 1, NULL, 1);
-
-  delay(2000);
 }
 
 // -------------------------------------------------------------------------
 
 void loop() {
-//  vTaskDelay(1);
   vTaskDelete(NULL);
 }
 
@@ -186,7 +188,12 @@ void loop() {
 
 void vLoop(void * pvParameters) {
   (void) pvParameters;
+  TickType_t xLastWakeTime = xTaskGetTickCount();
   uint32_t lastwritemicros = 0;
+
+  static constexpr bool SEND_IMU = true;
+  static constexpr bool SEND_STATUS = false;
+
   for (;;) {
 
     uint32_t tnow = micros();
@@ -204,12 +211,9 @@ void vLoop(void * pvParameters) {
       if (head < imubuf_tail_) {
           const uint16_t len = min(PRINT_MAX, IMUBUF_SIZE - imubuf_tail_);
           for (size_t i=0; i<len; ++i) {
-            imubuf_[imubuf_tail_+i].gyro_y = lastwritemicros;
-            imubuf_[imubuf_tail_+i].gyro_z = head;
-            imubuf_[imubuf_tail_+i].mag_x = imubuf_tail_;
-            imubuf_[imubuf_tail_+i].mag_y = imubuf_tail_+i;
-            imubuf_[imubuf_tail_+i].mag_z = imubuf_head_;
-            blen += esp_serial_imu_msg_send_to_buffer(&serbuf[blen], &imubuf_[imubuf_tail_+i]);
+            if (SEND_IMU) {
+              blen += esp_serial_imu_msg_send_to_buffer(&serbuf[blen], &imubuf_[imubuf_tail_+i]);
+            }
           }
           imubuf_tail_ = (imubuf_tail_ + len) % IMUBUF_SIZE; // = 0;
       }
@@ -218,29 +222,18 @@ void vLoop(void * pvParameters) {
       if (head > imubuf_tail_) {
         const uint16_t len = min(PRINT_MAX, head - imubuf_tail_);
         for (size_t i=0; i<len; ++i) {
-          imubuf_[imubuf_tail_+i].gyro_y = lastwritemicros;
-          imubuf_[imubuf_tail_+i].gyro_z = head;
-          imubuf_[imubuf_tail_+i].mag_x = imubuf_tail_;
-          imubuf_[imubuf_tail_+i].mag_y = imubuf_tail_+i;
-          imubuf_[imubuf_tail_+i].mag_z = imubuf_head_;
-          blen += esp_serial_imu_msg_send_to_buffer(&serbuf[blen], &imubuf_[imubuf_tail_+i]);
+          if (SEND_IMU) {
+            blen += esp_serial_imu_msg_send_to_buffer(&serbuf[blen], &imubuf_[imubuf_tail_+i]);
+          }
         }
         imubuf_tail_ = (imubuf_tail_ + len) % IMUBUF_SIZE; // = head;
       }
 
       Serial.write(serbuf, blen);
-      
     }
-//    else {
-//      esp_serial_imu_msg_t msg;
-//      msg.seq = 0;
-//      uint32_t blen = esp_serial_imu_msg_send_to_buffer(&serbuf[blen], &msg);
-//      Serial.write(serbuf, blen);
-//    }
 
     lastwritemicros = micros() - tnow;
 
-  static TickType_t xLastWakeTime = xTaskGetTickCount();
-  xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(1));
+    xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(2));
   }
 }

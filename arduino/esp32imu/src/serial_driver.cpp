@@ -54,6 +54,14 @@ void SerialDriver::sendRate(uint16_t frequency)
 // Callback stuff
 // ----------------------------------------------------------------------------
 
+void SerialDriver::registerCallbackStatus(CallbackStatus cb)
+{
+  std::lock_guard<std::mutex> lock(mtx_);
+  cb_status_ = cb;
+}
+
+// ----------------------------------------------------------------------------
+
 void SerialDriver::registerCallbackIMU(CallbackIMU cb)
 {
   std::lock_guard<std::mutex> lock(mtx_);
@@ -74,6 +82,7 @@ void SerialDriver::unregisterCallbacks()
 {
   std::lock_guard<std::mutex> lock(mtx_);
   cb_imu_ = nullptr;
+  cb_status_ = nullptr;
   cb_rate_ = nullptr;
 }
 
@@ -91,6 +100,9 @@ void SerialDriver::callback(const uint8_t * data, size_t len)
       switch (msg.type) {
         case ESP_SERIAL_MSG_IMU:
           handleIMUMsg(msg);
+          break;
+        case ESP_SERIAL_MSG_STATUS:
+          handleStatusMsg(msg);
           break;
         case ESP_SERIAL_MSG_RATE:
           handleRateMsg(msg);
@@ -110,6 +122,17 @@ void SerialDriver::handleIMUMsg(const esp_serial_message_t& msg)
 
   std::lock_guard<std::mutex> lock(mtx_);
   if (cb_imu_) cb_imu_(imu);
+}
+
+// ----------------------------------------------------------------------------
+
+void SerialDriver::handleStatusMsg(const esp_serial_message_t& msg)
+{
+  esp_serial_status_msg_t status;
+  esp_serial_status_msg_unpack(&status, &msg);
+
+  std::lock_guard<std::mutex> lock(mtx_);
+  if (cb_status_) cb_status_(status);
 }
 
 // ----------------------------------------------------------------------------
