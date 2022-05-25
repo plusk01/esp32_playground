@@ -54,7 +54,8 @@ void callback(const esp_serial_imu_msg_t& msg)
      << msg.mag_z;
 
   std::cout << "Got IMU " << msg.seq << " at " << msg.t_us
-            << " us (" << dt_us << " us): "
+            << " us (" << dt_us << " us / "
+            << 1./(dt_us * 1e-6) << " Hz): "
             << ss.str() << std::endl;
 
 
@@ -94,7 +95,7 @@ int main(int argc, char const *argv[])
 
   if (argc == 2) port = std::string(argv[1]);
 
-  acl::esp32imu::SerialDriver driver(port, 2000000);
+  acl::esp32imu::SerialDriver driver(port, 115200);
   driver.registerCallbackIMU(callback);
   driver.registerCallbackStatus(statusCb);
   driver.registerCallbackRate(rateCb);
