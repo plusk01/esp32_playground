@@ -17,6 +17,8 @@ plot(seq, gyr);
 xlabel('Sequence');
 ylabel('Gyro');
 
+dt = mean(diff(time))
+
 figure(3), clf;
 stem(diff(time));
 hold on

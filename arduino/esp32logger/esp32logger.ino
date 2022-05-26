@@ -201,6 +201,8 @@ void vTaskGetData(void * pvParameters) {
 void setup() {
   Serial.begin(2000000);
 
+  delay(2000);
+
   if (!init_fs()) {
     Serial.println("filesystem mount failed");
     return;

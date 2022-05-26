@@ -15,6 +15,7 @@
 #include <FFat.h>
 #include <LittleFS.h>
 #include <SD.h>
+#include <Adafruit_LSM6DS3.h>
 #include <Adafruit_LSM6DSL.h> // note -- impl is same for LSM6DSM
 
 union imudata_t {
@@ -44,11 +45,21 @@ volatile uint32_t t0_ = 0; ///< starting time
 enum State { IDLE, LOG, READ, DONE };
 State state;
 
-Adafruit_LSM6DSL imu;
+Adafruit_LSM6DS3 imu;
 static constexpr int LSM_INT1 = 22;
 
 // how long to sample for?
 static constexpr int SECONDS_TO_SAMPLE = 2;
+
+
+
+// sample rate, controlled by hardware timer
+hw_timer_t * timer = nullptr;
+static constexpr int TICKS_PER_SEC = 1000000;
+static constexpr int SAMPLE_PER_SEC = 2000;
+static constexpr int PERIOD_TICKS = TICKS_PER_SEC / SAMPLE_PER_SEC;
+
+
 
 TaskHandle_t xTaskToNotify = NULL;
 
@@ -67,9 +78,16 @@ FS& fs_ = SD;
 char DATABIN[] = "/data.bin";
 File file_;
 
+static constexpr int TOGGLE_PIN = 32;
+
 ///////////////////////////////////////////////////////////////////////
 
 void IRAM_ATTR dataready_isr() {
+  vTaskNotifyGiveFromISR(xTaskToNotify, NULL);
+  // TODO: if higher priority woken, do context switch?
+}
+
+void IRAM_ATTR timer_isr() {
   vTaskNotifyGiveFromISR(xTaskToNotify, NULL);
   // TODO: if higher priority woken, do context switch?
 }
@@ -147,7 +165,7 @@ void init_imu() {
     break; // unsupported range for the DS33
   }
 
-  imu.setAccelDataRate(LSM6DS_RATE_1_66K_HZ);
+  imu.setAccelDataRate(LSM6DS_RATE_6_66K_HZ);
   Serial.print("Accelerometer data rate set to: ");
   switch (imu.getAccelDataRate()) {
   case LSM6DS_RATE_SHUTDOWN:
@@ -185,7 +203,7 @@ void init_imu() {
     break;
   }
 
-  imu.setGyroDataRate(LSM6DS_RATE_1_66K_HZ);
+  imu.setGyroDataRate(LSM6DS_RATE_6_66K_HZ);
   Serial.print("Gyro data rate set to: ");
   switch (imu.getGyroDataRate()) {
   case LSM6DS_RATE_SHUTDOWN:
@@ -229,8 +247,8 @@ void init_imu() {
   imu.configInt1(false, true, false, false, false, true); // accelerometer DRDY on INT1
 //  imu.configInt2(false, true, false); // gyro DRDY on INT2
 
-  pinMode(LSM_INT1, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(LSM_INT1), dataready_isr, RISING);
+//  pinMode(LSM_INT1, INPUT_PULLUP);
+//  attachInterrupt(digitalPinToInterrupt(LSM_INT1), dataready_isr, RISING);
 
 //  sensors_event_t accel;
 //  sensors_event_t gyro;
@@ -244,14 +262,28 @@ void init_imu() {
 
 void vTaskGetData(void * pvParameters) {
   (void) pvParameters;
+
+  bool state = false;
+
+  // begin the hardware timer / sampling
+  timer = timerBegin(0, 80, true);
+  timerAttachInterrupt(timer, timer_isr, true);
+  timerAlarmWrite(timer, PERIOD_TICKS, true);
+  timerAlarmEnable(timer);
+//  t0_ = micros();
   
   for (;;) {
     if (ulTaskNotifyTake(pdTRUE, portMAX_DELAY) == pdTRUE) {
+
+      digitalWrite(TOGGLE_PIN, state);
+      state = !state;
+
+    
        // complete a SPI transaction with IMU to get data
        sensors_event_t accel;
        sensors_event_t gyro;
        sensors_event_t temp;
-//       imu.getEvent(&accel, &gyro, &temp);/
+       imu.getEvent(&accel, &gyro, &temp);
 
        imubuf_[imubuf_head_].data.t_sec = (micros() - t0_) * 1e-6;
        imubuf_[imubuf_head_].data.idx = seq++;
@@ -276,6 +308,8 @@ void vTaskGetData(void * pvParameters) {
 void setup() {
   Serial.begin(2000000);
 
+  pinMode(TOGGLE_PIN, OUTPUT);
+
   if (!init_fs()) {
     Serial.println("filesystem mount failed");
     return;
@@ -292,10 +326,10 @@ void setup() {
 
   xTaskCreatePinnedToCore(vLoop, "vLoop", 4096, NULL, 1, NULL, 1);
 
-  sensors_event_t accel;
-  sensors_event_t gyro;
-  sensors_event_t temp;
-  imu.getEvent(&accel, &gyro, &temp);
+//  sensors_event_t accel;
+//  sensors_event_t gyro;
+//  sensors_event_t temp;
+//  imu.getEvent(&accel, &gyro, &temp);
 }
 
 // -------------------------------------------------------------------------
