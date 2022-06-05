@@ -45,21 +45,22 @@ volatile uint32_t t0_ = 0; ///< starting time
 enum State { IDLE, LOG, READ, DONE };
 State state;
 
-Adafruit_LSM6DS3 imu;
+Adafruit_LSM6DSL imu;
 static constexpr int LSM_INT1 = 22;
 
 // how long to sample for?
 static constexpr int SECONDS_TO_SAMPLE = 2;
 
+#define USE_EXTINT
+// #define USE_TIMINT
 
-
+#if defined(USE_TIMINT)
 // sample rate, controlled by hardware timer
 hw_timer_t * timer = nullptr;
 static constexpr int TICKS_PER_SEC = 1000000;
 static constexpr int SAMPLE_PER_SEC = 2000;
 static constexpr int PERIOD_TICKS = TICKS_PER_SEC / SAMPLE_PER_SEC;
-
-
+#endif
 
 TaskHandle_t xTaskToNotify = NULL;
 
@@ -83,8 +84,11 @@ static constexpr int TOGGLE_PIN = 32;
 ///////////////////////////////////////////////////////////////////////
 
 void IRAM_ATTR dataready_isr() {
-  vTaskNotifyGiveFromISR(xTaskToNotify, NULL);
-  // TODO: if higher priority woken, do context switch?
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+  vTaskNotifyGiveFromISR(xTaskToNotify, &xHigherPriorityTaskWoken);
+  if (xHigherPriorityTaskWoken) {
+    portYIELD_FROM_ISR();
+  }
 }
 
 void IRAM_ATTR timer_isr() {
@@ -247,8 +251,10 @@ void init_imu() {
   imu.configInt1(false, true, false, false, false, true); // accelerometer DRDY on INT1
 //  imu.configInt2(false, true, false); // gyro DRDY on INT2
 
-//  pinMode(LSM_INT1, INPUT_PULLUP);
-//  attachInterrupt(digitalPinToInterrupt(LSM_INT1), dataready_isr, RISING);
+#if defined(USE_EXTINT)
+  pinMode(LSM_INT1, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(LSM_INT1), dataready_isr, RISING);
+#endif
 
 //  sensors_event_t accel;
 //  sensors_event_t gyro;
@@ -266,10 +272,12 @@ void vTaskGetData(void * pvParameters) {
   bool state = false;
 
   // begin the hardware timer / sampling
+#if defined(USE_TIMINT)
   timer = timerBegin(0, 80, true);
   timerAttachInterrupt(timer, timer_isr, true);
   timerAlarmWrite(timer, PERIOD_TICKS, true);
   timerAlarmEnable(timer);
+#endif
 //  t0_ = micros();
   
   for (;;) {
@@ -384,6 +392,10 @@ void vLoop(void * pvParameters) {
       const float tnow = millis() * 1e-3;
   
       if (tnow - t0 >= SECONDS_TO_SAMPLE) {
+#if defined(USE_EXTINT)
+        // mask interrupts since we aren't sampling anymore
+        detachInterrupt(digitalPinToInterrupt(LSM_INT1));
+#endif
         tf = (millis() * 1e-3) - t0;
         Serial.print(seqnow); Serial.print(" samples in "); Serial.print(tf); Serial.println(" seconds");
         Serial.print("t0 = "); Serial.print(t0); Serial.print("\ttnow = "); Serial.println(tnow);
@@ -418,6 +430,13 @@ void vLoop(void * pvParameters) {
       } else {
         Serial.println("Failed to open data file for reading");
       }
+
+//      requires extra work: https://github.com/espressif/arduino-esp32/issues/4531#issuecomment-869066725
+//      char statbuf[500];
+//      vTaskGetRunTimeStats(statbuf);
+//      Serial.println("\n\nAbout to print vTaskGetRunTimeStats:\n\n");
+//      Serial.print(statbuf);
+//      Serial.println();
   
       state = State::DONE;
     } else if (state == State::DONE) {

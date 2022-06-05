@@ -1,4 +1,5 @@
-data = csvread('/tmp/data.csv');
+% data = csvread('/tmp/data.csv');
+data = csvread('/tmp/bindata.csv');
 
 % data = data(1:500,:);
 
@@ -23,4 +24,5 @@ figure(3), clf;
 stem(diff(time));
 hold on
 plot(seq, mean(diff(time))*ones(size(seq)))
-plot(seq, 1/1660*ones(size(seq)))
+plot(seq, 1/1666*ones(size(seq)))
+legend('actual','avg actual','expected','Location','SouthWest')

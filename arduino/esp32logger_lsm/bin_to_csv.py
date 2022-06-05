@@ -5,6 +5,9 @@ import numpy as np
 if __name__ == '__main__':
     
     binfile = '/tmp/data.bin'
+    # binfile = 'data/data_1666.bin'
+    # binfile = 'data/data_3333.bin'
+    # binfile = 'data/data_6664.bin'
 
     data = []
 
